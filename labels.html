@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Barcode Labels</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏷</text></svg>">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="common.js"></script>
+<style>
+  :root { --bg: #f3f4f6; --card: #fff; --text: #1b1f23; --muted: #6b7280; --line: #e2e5e9; --accent: #1565c0; --accent-text: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121417; --card: #1d2125; --text: #eceff1; --muted: #9aa3ab; --line: #2d3338; --accent: #64a7f0; --accent-text: #0b1520; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
+  button, input, select { font: inherit; color: inherit; }
+  button, select { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+  .bar input[type=number] { width: 70px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; }
+  th { font-size: 13px; color: var(--muted); border-top: 0; }
+  td input { width: 64px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); text-align: center; }
+  td.code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .tablewrap { overflow-x: auto; }
+  #preview { margin-top: 18px; overflow-x: auto; }
+  #preview .page { transform-origin: top left; margin-bottom: 16px; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+
+  /* Printed sheets */
+  .page { width: 8.5in; height: 11in; background: #fff; color: #000; display: grid; overflow: hidden; }
+  .page.l5160 { padding: 0.5in 0.1875in; grid-template-columns: repeat(3, 2.625in); grid-auto-rows: 1in; column-gap: 0.125in; }
+  .page.l5163 { padding: 0.5in 0.156in; grid-template-columns: repeat(2, 4in); grid-auto-rows: 2in; column-gap: 0.188in; }
+  .label { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0.06in 0.12in; overflow: hidden; }
+  .label .nm { font: 600 8.5pt/1.1 Arial, sans-serif; text-align: center; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .label svg { display: block; max-width: 100%; height: 0.62in; }
+  .l5163 .label .nm { font-size: 14pt; white-space: normal; }
+  .l5163 .label svg { height: 1.2in; }
+
+  @media print {
+    @page { size: letter; margin: 0; }
+    body { background: #fff; }
+    .noprint { display: none !important; }
+    #preview { margin: 0; overflow: visible; }
+    #preview .page { transform: none !important; box-shadow: none; margin: 0; break-after: page; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap noprint">
+  <h1>🏷 Barcode labels</h1>
+  <p class="muted">Pick how many labels you need for each item, then Print. Works with Avery 5160 (30 per sheet) or 5163 (10 big labels per sheet) — or plain paper and tape. In the print box, set scale to <b>100% / Actual size</b>. <a href="./">← Back to scanner</a></p>
+  <div id="setupMsg" hidden><p><b>Not set up yet.</b> In the Google Sheet use <b>📦 Inventory → Phone setup</b> and click “Print barcode labels”.</p></div>
+  <div id="ui" hidden>
+    <div class="bar">
+      <select id="truck"><option value="">All trucks</option></select>
+      <span>Set all shown to</span><input type="number" id="setAll" min="0" value="1"><button id="applyAll">Apply</button>
+      <select id="layout"><option value="l5160">Avery 5160 · 30/sheet</option><option value="l5163">Avery 5163 · 10/sheet</option></select>
+      <button id="reload">↻ Reload items</button>
+      <button class="primary" id="print">🖨 Print</button>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Item</th><th>Truck</th><th>Barcode</th><th>Labels</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <p class="muted" id="summary"></p>
+  </div>
+</div>
+<div id="preview"></div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const { esc } = Inv;
+  const qty = {};
+
+  function items() {
+    const t = $('#truck').value;
+    return Inv.items().filter(it => it.barcode && (!t || it.truck === t))
+      .sort((a, b) => (a.truck + a.name).localeCompare(b.truck + b.name));
+  }
+
+  function renderTable() {
+    const list = items();
+    $('#rows').innerHTML = list.map(it => `<tr>
+      <td>${esc(it.name)}</td><td>${esc(it.truck)}</td><td class="code">${esc(it.barcode)}</td>
+      <td><input type="number" min="0" data-c="${esc(it.barcode)}" value="${qty[it.barcode] || 0}"></td></tr>`).join('')
+      || '<tr><td colspan="4" class="muted">No items with barcodes. In the sheet: 📦 Inventory → Assign missing barcodes, then Reload.</td></tr>';
+    renderPreview();
+  }
+
+  function renderPreview() {
+    const layout = $('#layout').value;
+    const perPage = layout === 'l5160' ? 30 : 10;
+    const labels = [];
+    Inv.items().forEach(it => { for (let i = 0; i < (qty[it.barcode] || 0); i++) labels.push(it); });
+    const pages = Math.ceil(labels.length / perPage);
+    $('#summary').textContent = labels.length ? `${labels.length} labels · ${pages} sheet${pages > 1 ? 's' : ''}` : 'No labels picked yet.';
+    let html = '';
+    for (let p = 0; p < pages; p++) {
+      html += `<div class="page ${layout}">` + labels.slice(p * perPage, (p + 1) * perPage).map(it =>
+        `<div class="label"><div class="nm">${esc(it.name)}</div><svg data-code="${esc(it.barcode)}"></svg></div>`).join('') + '</div>';
+    }
+    const box = $('#preview');
+    box.innerHTML = html;
+    const big = layout === 'l5163';
+    box.querySelectorAll('svg[data-code]').forEach(svg => {
+      try {
+        JsBarcode(svg, svg.dataset.code, { format: 'CODE128', width: 2, height: big ? 90 : 46, fontSize: big ? 22 : 15, margin: 0, textMargin: 1 });
+        // Let CSS size the barcode while keeping its proportions.
+        const w = svg.getAttribute('width'), h = svg.getAttribute('height');
+        svg.setAttribute('viewBox', `0 0 ${parseFloat(w)} ${parseFloat(h)}`);
+        svg.removeAttribute('width');
+        svg.removeAttribute('height');
+      } catch (e) {
+        svg.outerHTML = `<div class="nm">Bad code: ${esc(svg.dataset.code)}</div>`;
+      }
+    });
+    fitPreview();
+  }
+
+  function fitPreview() {
+    const avail = $('#preview').clientWidth || window.innerWidth;
+    const pageW = 8.5 * 96;
+    const scale = Math.min(1, (avail - 4) / pageW);
+    document.querySelectorAll('#preview .page').forEach(pg => {
+      pg.style.transform = `scale(${scale})`;
+      pg.style.marginBottom = `${16 - 11 * 96 * (1 - scale)}px`;
+    });
+  }
+
+  $('#rows').addEventListener('input', (e) => {
+    const c = e.target.dataset.c;
+    if (!c) return;
+    qty[c] = Math.max(0, parseInt(e.target.value, 10) || 0);
+    renderPreview();
+  });
+  $('#applyAll').onclick = () => {
+    const n = Math.max(0, parseInt($('#setAll').value, 10) || 0);
+    items().forEach(it => { qty[it.barcode] = n; });
+    renderTable();
+  };
+  $('#truck').onchange = renderTable;
+  $('#layout').onchange = renderPreview;
+  $('#print').onclick = () => window.print();
+  $('#reload').onclick = load;
+  window.addEventListener('resize', fitPreview);
+
+  async function load() {
+    try {
+      await Inv.api('items');
+    } catch (e) {
+      Inv.toast(e instanceof Inv.ApiError ? e.message : 'No connection — showing saved items.', 'bad');
+    }
+    renderTable();
+  }
+
+  Inv.readSetupLink();
+  $('#truck').innerHTML += Inv.TRUCKS.map(t => `<option>${esc(t)}</option>`).join('');
+  const c = Inv.cfg();
+  if (!c.api || !c.key) { $('#setupMsg').hidden = false; return; }
+  $('#ui').hidden = false;
+  renderTable();
+  load();
+})();
+</script>
+<style>
+  #toast { position: fixed; left: 16px; right: 16px; bottom: 20px; padding: 12px; border-radius: 10px; background: #263238; color: #fff; text-align: center; opacity: 0; transition: .2s; pointer-events: none; }
+  #toast.show { opacity: 1; } #toast.bad { background: #c62828; } #toast.good { background: #2e7d32; }
+  @media print { #toast { display: none; } }
+</style>
+</body>
+</html>

@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Inventory">
+<meta name="theme-color" content="#1f2a30">
+<title>Inventory Scanner</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="common.js"></script>
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #ffffff; --text: #1b1f23; --muted: #6b7280; --line: #e2e5e9;
+    --accent: #1565c0; --accent-text: #ffffff;
+    --good: #2e7d32; --good-bg: #dcefdc; --warn: #b26a00; --warn-bg: #fde3b5; --bad: #c62828; --bad-bg: #f8d0cc;
+    --top: #1f2a30;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121417; --card: #1d2125; --text: #eceff1; --muted: #9aa3ab; --line: #2d3338;
+      --accent: #64a7f0; --accent-text: #0b1520;
+      --good: #81c784; --good-bg: #1f3a22; --warn: #ffb74d; --warn-bg: #3d2e12; --bad: #ef9a9a; --bad-bg: #44201f; --top: #0b0e10; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { min-height: 100vh; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 10px 14px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; }
+  .muted { color: var(--muted); }
+  .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px;
+    padding: calc(env(safe-area-inset-top) + 10px) 16px 10px; background: var(--top); color: #fff; }
+  .top h1 { font-size: 18px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top button { background: transparent; border: 0; color: #fff; padding: 4px 8px; font-size: 22px; line-height: 1; }
+  .pill { font-size: 12px; padding: 3px 8px; border-radius: 99px; background: rgba(255,255,255,.15); white-space: nowrap; }
+  main { padding: 16px; max-width: 640px; margin: 0 auto; padding-bottom: 110px; }
+  section[hidden] { display: none !important; }
+  .big { display: flex; width: 100%; align-items: center; gap: 14px; text-align: left; padding: 18px 16px; margin-bottom: 12px; border-radius: 14px; }
+  .big .em { font-size: 34px; }
+  .big b { display: block; font-size: 19px; }
+  .big small { display: block; color: var(--muted); font-size: 14px; }
+  .big.hot { border: 2px solid var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .row > * { flex: 1 1 auto; text-align: center; text-decoration: none; color: var(--text); border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 10px 12px; }
+  .banner { border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); }
+  .banner .row > * { flex: 0 0 auto; }
+
+  /* Scanner */
+  #camWrap { position: relative; margin: -16px -16px 0; background: #000; height: 38vh; min-height: 220px; overflow: hidden; }
+  #camWrap.off { height: 64px; min-height: 0; }
+  #reader { width: 100%; height: 100%; }
+  #reader video { object-fit: cover; width: 100% !important; height: 100% !important; }
+  #reader img[alt="Info icon"], #reader__dashboard { display: none !important; }
+  #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s; }
+  #flash.ok { background: rgba(46,160,67,.55); opacity: 1; transition: none; }
+  #flash.unknown { background: rgba(220,40,40,.55); opacity: 1; transition: none; }
+  #camMsg { position: absolute; left: 12px; right: 12px; bottom: 10px; color: #fff; font-size: 14px; text-align: center; text-shadow: 0 1px 3px #000; }
+  .camBtns { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 2; }
+  .camBtns button { background: rgba(0,0,0,.55); color: #fff; border: 0; padding: 6px 10px; font-size: 14px; }
+  .last { background: var(--card); border-radius: 0 0 14px 14px; margin: 0 -16px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); min-height: 64px; }
+  .last b { font-size: 20px; display: block; }
+  .last.unknown b { color: var(--bad); }
+  .scanbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .scanbar span { flex: 1; font-weight: 600; }
+
+  ul.list { list-style: none; margin: 0; padding: 0; background: var(--card); border-radius: 12px; overflow: hidden; }
+  ul.list li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  ul.list li:first-child { border-top: 0; }
+  ul.list li .name { flex: 1; min-width: 0; }
+  ul.list li .name small { display: block; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.list li.unknown .name { color: var(--bad); }
+  ul.list li .qty { font-size: 22px; font-weight: 700; min-width: 36px; text-align: center; }
+  ul.list li button { padding: 6px 12px; }
+  .empty { padding: 18px; text-align: center; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--line); }
+  .dot.OK { background: var(--good); } .dot.Getting { background: var(--warn); } .dot.Very { background: var(--bad); }
+
+  .footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(env(safe-area-inset-bottom) + 12px); background: var(--bg); border-top: 1px solid var(--line); display: flex; gap: 10px; z-index: 4; }
+  .footer button { flex: 1; padding: 14px; font-size: 17px; }
+
+  h2 { font-size: 20px; margin: 4px 0 8px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  details { background: var(--card); border-radius: 12px; margin: 10px 0; }
+  details summary { padding: 12px 14px; font-weight: 600; cursor: pointer; }
+  details ul.list { border-radius: 0 0 12px 12px; }
+  label.check { display: flex; gap: 10px; align-items: flex-start; background: var(--card); padding: 12px 14px; border-radius: 12px; margin: 10px 0; }
+  label.check input { width: 22px; height: 22px; flex: none; margin-top: 1px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button { flex: 1; padding: 10px 4px; font-size: 14px; }
+  .tabs button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .total { display: flex; justify-content: space-between; font-weight: 700; padding: 12px 4px; }
+
+  .field { display: block; margin: 10px 0; }
+  .field span { display: block; font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+  .field input, .field select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+
+  dialog { border: 0; border-radius: 16px; padding: 18px; width: min(420px, calc(100vw - 32px)); background: var(--card); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog h2 { margin-top: 0; }
+  #qtyInput { width: 100%; font-size: 34px; text-align: center; padding: 10px; border-radius: 10px; border: 2px solid var(--accent); background: var(--bg); }
+  .quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 12px 0; }
+  .quick button { padding: 12px 0; font-size: 18px; font-weight: 600; }
+  .actions { display: flex; gap: 10px; margin-top: 12px; }
+  .actions button { flex: 1; padding: 12px; }
+  .err { color: var(--bad); font-size: 14px; }
+
+  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 90px); z-index: 50; padding: 12px 14px; border-radius: 12px; background: #263238; color: #fff; opacity: 0; transform: translateY(10px); transition: .2s; pointer-events: none; text-align: center; }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.good { background: #2e7d32; } #toast.bad { background: #c62828; } #toast.warn { background: #a35f00; }
+</style>
+</head>
+<body>
+<header class="top">
+  <button id="backBtn" hidden aria-label="Back">‹</button>
+  <h1 id="title">Inventory</h1>
+  <span id="net" class="pill" hidden></span>
+</header>
+
+<main>
+  <!-- First-time setup -->
+  <section id="v-setup" hidden>
+    <h2>Set up this phone</h2>
+    <p>On your computer, open the Google Sheet and click <b>📦 Inventory → Phone setup</b>. Point this phone's camera at the QR code and open the link.</p>
+    <p class="muted">Or paste the details by hand:</p>
+    <label class="field"><span>Web app URL</span><input id="setupApi" placeholder="https://script.google.com/macros/s/…/exec"></label>
+    <label class="field"><span>Key</span><input id="setupKey" autocapitalize="off" autocomplete="off"></label>
+    <button class="primary" id="setupSave">Save</button>
+  </section>
+
+  <!-- Home -->
+  <section id="v-home" hidden>
+    <div id="outbox"></div>
+    <button class="big" id="goCount"><span class="em">📋</span><span><b>Weekly Count</b><small id="countSub">Walk the store and scan every box</small></span></button>
+    <button class="big" id="goRecv"><span class="em">🚚</span><span><b>Receive Truck</b><small id="recvSub">Scan one box, type how many came in</small></span></button>
+    <button class="big" id="goOrder"><span class="em">🛒</span><span><b>Order List</b><small id="orderSub"></small></span></button>
+    <div class="row">
+      <button id="refreshBtn">↻ Refresh items</button>
+      <a href="labels.html">🏷 Labels</a>
+      <button id="settingsBtn">⚙ Settings</button>
+    </div>
+    <p id="itemsInfo" class="muted"></p>
+  </section>
+
+  <!-- Scanning (count + receive) -->
+  <section id="v-scan" hidden>
+    <div id="camWrap">
+      <div id="reader"></div>
+      <div id="flash"></div>
+      <div class="camBtns"><button id="torchBtn" hidden>🔦</button><button id="camToggle">Camera off</button></div>
+      <div id="camMsg"></div>
+    </div>
+    <div id="last" class="last"><span class="muted" id="lastHint"></span></div>
+    <div class="scanbar"><span id="scanTotal"></span><button id="undoBtn">↶ Undo</button></div>
+    <ul id="tally" class="list"></ul>
+    <div class="footer"><button class="primary" id="finishBtn">Review &amp; Submit</button></div>
+  </section>
+
+  <!-- Review before sending -->
+  <section id="v-review" hidden>
+    <div id="reviewBody"></div>
+    <div class="footer">
+      <button id="keepScanning">Keep scanning</button>
+      <button class="primary" id="submitBtn">Submit</button>
+    </div>
+  </section>
+
+  <!-- Order list -->
+  <section id="v-order" hidden>
+    <div class="tabs" id="orderTabs"></div>
+    <label class="check"><input type="checkbox" id="showAll"> Show every item (not just what to order)</label>
+    <div id="orderBody"></div>
+    <div class="footer"><button id="copyOrder">📋 Copy list</button><button id="orderRefresh">↻ Refresh</button></div>
+  </section>
+
+  <!-- Settings -->
+  <section id="v-settings" hidden>
+    <h2>Settings</h2>
+    <label class="field"><span>Same-box delay: <b id="gapVal"></b> s</span>
+      <input type="range" id="gap" min="0.3" max="2" step="0.1"></label>
+    <p class="muted" style="margin-top:-4px">After a beep, the camera won't count that same label again until it has been out of view this long. Raise it if boxes double-count; lower it if you have to wait between boxes.</p>
+    <label class="check"><input type="checkbox" id="sound"> Beep on scan</label>
+    <label class="check"><input type="checkbox" id="camera"> Turn camera on automatically (turn off if you only use a Bluetooth scanner)</label>
+    <label class="field"><span>Web app URL</span><input id="setApi"></label>
+    <label class="field"><span>Key</span><input id="setKey" autocapitalize="off" autocomplete="off"></label>
+    <div class="row"><button class="primary" id="saveSettings">Save</button><button id="testConn">Test connection</button></div>
+    <h3>Danger zone</h3>
+    <div class="row"><button id="clearCount">Throw away count in progress</button><button id="clearRecv">Throw away truck in progress</button></div>
+  </section>
+</main>
+
+<dialog id="qtyDlg">
+  <form method="dialog" id="qtyForm">
+    <h2 id="qtyName"></h2>
+    <p class="muted" id="qtyInfo"></p>
+    <input id="qtyInput" type="number" inputmode="numeric" pattern="[0-9]*" min="0" step="1" placeholder="How many?">
+    <div class="quick" id="quick"></div>
+    <div class="actions"><button type="button" id="qtyCancel">Cancel</button><button class="primary" value="ok">Add</button></div>
+  </form>
+</dialog>
+
+<dialog id="newDlg">
+  <form method="dialog" id="newForm">
+    <h2>New item</h2>
+    <p class="muted">Label <b id="newCode"></b> isn't in your sheet yet.</p>
+    <label class="field"><span>Item name *</span><input id="newName" required></label>
+    <label class="field"><span>Truck</span><select id="newTruck"></select></label>
+    <div class="grid2">
+      <label class="field"><span>Unit cost $</span><input id="newCost" type="number" inputmode="decimal" step="0.01"></label>
+      <label class="field"><span>Par (order up to)</span><input id="newPar" type="number" inputmode="numeric"></label>
+      <label class="field"><span>Orange at</span><input id="newLow" type="number" inputmode="numeric"></label>
+      <label class="field"><span>Red at</span><input id="newVeryLow" type="number" inputmode="numeric"></label>
+    </div>
+    <p class="err" id="newErr"></p>
+    <div class="actions"><button type="button" id="newCancel">Skip</button><button class="primary" id="newSave" type="submit">Add item</button></div>
+  </form>
+</dialog>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const { esc, norm, money, toast, ICON, TRUCKS } = Inv;
+
+  let C = Inv.cfg();
+  let mode = null;            // 'count' | 'recv'
+  let view = null;
+  let byCode = {};
+
+  // ─────────── Items ───────────
+  function indexItems() {
+    byCode = {};
+    Inv.items().forEach(it => { if (it.barcode) byCode[it.barcode] = it; });
+  }
+  function itemLabel(code) {
+    const it = byCode[code];
+    return it ? it.name : 'Unknown label ' + code;
+  }
+  async function refreshItems(quiet) {
+    try {
+      await Inv.api('items');
+      indexItems();
+      setNet(true);
+      if (!quiet) toast('Items updated', 'good');
+    } catch (e) {
+      setNet(false);
+      if (!quiet) toast(e instanceof Inv.ApiError ? e.message : 'No connection — using saved items.', 'bad');
+    }
+    if (view === 'home') renderHome();
+  }
+  function setNet(ok) {
+    const el = $('#net');
+    el.hidden = false;
+    el.textContent = ok ? '● online' : '● offline';
+    el.style.color = ok ? '#a5d6a7' : '#ffcc80';
+  }
+
+  // ─────────── Sessions (kept on the phone until sent) ───────────
+  function countSession() {
+    let s = Inv.load('count', null);
+    if (!s) { s = { id: Inv.uid(), startedAt: Date.now(), log: [] }; Inv.save('count', s); }
+    return s;
+  }
+  function recvSession() {
+    let s = Inv.load('recv', null);
+    if (!s) { s = { id: Inv.uid(), startedAt: Date.now(), lines: [] }; Inv.save('recv', s); }
+    return s;
+  }
+  function tallyOf(log) {
+    const t = {};
+    log.forEach(c => { t[c] = (t[c] || 0) + 1; });
+    return t;
+  }
+  function recvTotals(lines) {
+    const t = {};
+    lines.forEach(l => { t[l.code] = (t[l.code] || 0) + l.qty; });
+    Object.keys(t).forEach(k => { if (!t[k]) delete t[k]; });
+    return t;
+  }
+  // Codes ordered by most recently scanned first.
+  function recentOrder(codes) {
+    const seen = new Set();
+    const out = [];
+    for (let i = codes.length - 1; i >= 0; i--) if (!seen.has(codes[i])) { seen.add(codes[i]); out.push(codes[i]); }
+    return out;
+  }
+
+  // ─────────── Views ───────────
+  const TITLES = { setup: 'Set up', home: 'Inventory', scan: '', review: 'Review', order: 'Order List', settings: 'Settings' };
+  const BACK = { scan: 'home', review: 'scan', order: 'home', settings: 'home' };
+  function show(v) {
+    if (view === 'scan' && v !== 'scan') stopCamera();
+    view = v;
+    document.querySelectorAll('main > section').forEach(s => { s.hidden = s.id !== 'v-' + v; });
+    $('#title').textContent = v === 'scan' ? (mode === 'count' ? '📋 Weekly Count' : '🚚 Receive Truck') : TITLES[v];
+    $('#backBtn').hidden = !BACK[v];
+    window.scrollTo(0, 0);
+    if (v === 'home') renderHome();
+    if (v === 'scan') { renderScan(); if (C.camera) startCamera(); else setCamUi(false); }
+    if (v === 'review') renderReview();
+    if (v === 'order') renderOrder();
+    if (v === 'settings') renderSettings();
+  }
+  $('#backBtn').onclick = () => show(BACK[view] || 'home');
+
+  // ─────────── Home ───────────
+  function renderHome() {
+    const c = Inv.load('count', null);
+    const r = Inv.load('recv', null);
+    $('#countSub').textContent = c && c.log.length
+      ? `In progress: ${c.log.length} boxes scanned — tap to continue` : 'Walk the store and scan every box';
+    $('#goCount').classList.toggle('hot', !!(c && c.log.length));
+    const rt = r ? recvTotals(r.lines) : {};
+    $('#recvSub').textContent = Object.keys(rt).length
+      ? `In progress: ${Object.keys(rt).length} items — tap to continue` : 'Scan one box, type how many came in';
+    $('#goRecv').classList.toggle('hot', Object.keys(rt).length > 0);
+
+    const items = Inv.items();
+    const toOrder = items.filter(it => it.orderQty > 0).length;
+    $('#orderSub').textContent = items.length ? `${toOrder} item${toOrder === 1 ? '' : 's'} to order` : 'Load your items first';
+    const meta = Inv.load('items', null);
+    $('#itemsInfo').textContent = items.length
+      ? `${items.length} items loaded · updated ${ago(meta.at)}`
+      : 'No items yet. Add them on the Items tab in the sheet, then tap Refresh.';
+    renderOutbox();
+  }
+  function ago(t) {
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    const h = Math.round(m / 60);
+    return h < 24 ? h + ' hr ago' : Math.round(h / 24) + ' days ago';
+  }
+  function renderOutbox() {
+    const box = Inv.load('outbox', []);
+    const el = $('#outbox');
+    if (!box.length) { el.innerHTML = ''; return; }
+    const failed = box.find(j => j.error);
+    el.innerHTML = `<div class="banner ${failed ? 'bad' : 'warn'}">
+      <b>${box.length} waiting to send:</b> ${box.map(j => esc(j.label)).join(', ')}
+      ${failed ? `<div>Problem: ${esc(failed.error)}</div>` : '<div>Saved on this phone. Sends when you have signal.</div>'}
+      <div class="row"><button id="retryBox">Send now</button>${failed ? '<button id="dropBox">Discard</button>' : ''}</div></div>`;
+    $('#retryBox').onclick = () => flushOutbox(true);
+    if (failed) $('#dropBox').onclick = () => {
+      if (!confirm('Throw away "' + box[0].label + '"? This cannot be undone.')) return;
+      box.shift();
+      Inv.save('outbox', box);
+      renderOutbox();
+    };
+  }
+  let flushing = false;
+  async function flushOutbox(loud) {
+    if (flushing) return;
+    flushing = true;
+    try {
+      const box = Inv.load('outbox', []);
+      while (box.length) {
+        const job = box[0];
+        try {
+          await Inv.api(job.action, job);
+          box.shift();
+          Inv.save('outbox', box);
+          setNet(true);
+          toast('Sent: ' + job.label, 'good');
+        } catch (e) {
+          if (e instanceof Inv.ApiError) { job.error = e.message; Inv.save('outbox', box); }
+          else { setNet(false); if (loud) toast('Still no connection.', 'warn'); }
+          break;
+        }
+      }
+    } finally {
+      flushing = false;
+      indexItems();
+      if (view === 'home') renderHome();
+    }
+  }
+  window.addEventListener('online', () => flushOutbox(false));
+
+  $('#goCount').onclick = () => startScan('count');
+  $('#goRecv').onclick = () => startScan('recv');
+  $('#goOrder').onclick = () => show('order');
+  $('#refreshBtn').onclick = () => refreshItems(false);
+  $('#settingsBtn').onclick = () => show('settings');
+
+  function startScan(m) {
+    unlockAudio();
+    mode = m;
+    if (m === 'count') countSession(); else recvSession();
+    if (!Inv.items().length) toast('No items loaded yet — tap Refresh on the home screen.', 'warn');
+    show('scan');
+  }
+
+  // ─────────── Camera ───────────
+  let qr = null;
+  let camOn = false;
+  let paused = false;
+  const lastSeen = {};
+
+  function setCamUi(on) {
+    $('#camWrap').classList.toggle('off', !on);
+    $('#camToggle').textContent = on ? 'Camera off' : '📷 Camera on';
+    if (!on) {
+      $('#torchBtn').hidden = true;
+      $('#camMsg').textContent = 'Camera off — Bluetooth scanner ready';
+    }
+  }
+  async function startCamera() {
+    if (camOn) return;
+    setCamUi(true);
+    const msg = $('#camMsg');
+    if (!window.Html5Qrcode) { msg.textContent = 'Scanner didn\'t load — check your internet, then reopen.'; return; }
+    msg.textContent = 'Starting camera…';
+    try {
+      if (!qr) {
+        const F = window.Html5QrcodeSupportedFormats;
+        qr = new Html5Qrcode('reader', {
+          verbose: false,
+          formatsToSupport: [F.CODE_128, F.CODE_39, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.ITF, F.QR_CODE],
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+        });
+      }
+      await qr.start({ facingMode: 'environment' }, {
+        fps: 15,
+        disableFlip: true,
+        qrbox: (w, h) => ({ width: Math.max(60, Math.floor(w * 0.9)), height: Math.max(60, Math.floor(Math.min(h * 0.6, w * 0.45))) }),
+      }, onDecode, () => {});
+      camOn = true;
+      msg.textContent = mode === 'count' ? 'Point at each box label' : 'Point at a label';
+      setupTorch();
+    } catch (e) {
+      msg.textContent = 'Camera blocked: allow camera access in your browser settings, or use a Bluetooth scanner.';
+    }
+  }
+  async function stopCamera() {
+    if (qr && camOn) { try { await qr.stop(); } catch (e) { /* already stopped */ } }
+    camOn = false;
+    torch = false;
+  }
+  let torch = false;
+  function setupTorch() {
+    const btn = $('#torchBtn');
+    try {
+      const t = qr.getRunningTrackCameraCapabilities().torchFeature();
+      btn.hidden = !t.isSupported();
+      btn.onclick = async () => { torch = !torch; try { await t.apply(torch); } catch (e) { torch = !torch; } };
+    } catch (e) {
+      btn.hidden = true;
+    }
+  }
+  $('#camToggle').onclick = async () => {
+    if (camOn) { await stopCamera(); setCamUi(false); } else startCamera();
+  };
+
+  function onDecode(text) {
+    const code = norm(text);
+    if (!code) return;
+    const now = performance.now();
+    const prev = lastSeen[code] || 0;
+    lastSeen[code] = now;
+    // Same label still in view (or came back too fast) → it's the same box, don't count again.
+    if (paused || now - prev < C.gap * 1000) return;
+    handleCode(code);
+  }
+
+  // Bluetooth / USB scanners type the code then press Enter.
+  let kbuf = '';
+  let klast = 0;
+  document.addEventListener('keydown', (e) => {
+    if (view !== 'scan' || document.querySelector('dialog[open]')) return;
+    if (e.target.closest && e.target.closest('input, select, textarea')) return;
+    const now = Date.now();
+    if (now - klast > 500) kbuf = '';
+    klast = now;
+    if (e.key === 'Enter') {
+      if (kbuf) { e.preventDefault(); const c = norm(kbuf); kbuf = ''; handleCode(c); }
+      return;
+    }
+    if (e.key.length === 1) { kbuf += e.key; e.preventDefault(); }
+  });
+  // Stop a tapped button from keeping focus, so a scanner's Enter can't "press" it.
+  document.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) b.blur(); });
+
+  // ─────────── Feedback ───────────
+  let actx = null;
+  function unlockAudio() {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+    } catch (e) { actx = null; }
+  }
+  function beep(freq, dur, delay) {
+    if (!C.sound || !actx) return;
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.value = 0.06;
+    o.connect(g);
+    g.connect(actx.destination);
+    const t = actx.currentTime + (delay || 0);
+    o.start(t);
+    o.stop(t + dur);
+  }
+  let flashTimer;
+  function feedback(kind) {
+    if (kind === 'ok') { beep(1500, 0.07); if (navigator.vibrate) navigator.vibrate(35); }
+    else { beep(320, 0.12); beep(320, 0.12, 0.18); if (navigator.vibrate) navigator.vibrate([80, 60, 80]); }
+    const f = $('#flash');
+    f.className = kind;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { f.className = ''; }, 120);
+  }
+
+  // ─────────── Scanning logic ───────────
+  async function handleCode(code) {
+    const item = byCode[code];
+    feedback(item ? 'ok' : 'unknown');
+    if (mode === 'count') {
+      const s = countSession();
+      s.log.push(code);
+      Inv.save('count', s);
+      renderScan(code);
+      return;
+    }
+    paused = true;
+    try {
+      let it = item;
+      if (!it) it = await newItemPrompt(code);
+      if (it) await addReceived(it);
+    } finally {
+      paused = false;
+    }
+  }
+
+  async function addReceived(it, replace) {
+    const s = recvSession();
+    const have = recvTotals(s.lines)[it.barcode] || 0;
+    const info = replace ? 'Change the total received' : (have ? `Already added ${have} — this adds more` : (it.truck || ''));
+    const n = await qtyPrompt(it.name, info, replace ? have : '');
+    if (n === null) return;
+    if (replace) {
+      s.lines = s.lines.filter(l => l.code !== it.barcode);
+      if (n > 0) s.lines.push({ code: it.barcode, qty: n });
+    } else if (n > 0) {
+      s.lines.push({ code: it.barcode, qty: n });
+    }
+    Inv.save('recv', s);
+    renderScan(it.barcode);
+  }
+
+  function renderScan(justScanned) {
+    const list = $('#tally');
+    const last = $('#last');
+    if (mode === 'count') {
+      const s = countSession();
+      const t = tallyOf(s.log);
+      const codes = recentOrder(s.log);
+      $('#scanTotal').textContent = `${s.log.length} boxes · ${codes.length} items`;
+      $('#finishBtn').textContent = 'Review & Submit';
+      const cur = justScanned || s.log[s.log.length - 1];
+      if (cur) {
+        last.className = 'last' + (byCode[cur] ? '' : ' unknown');
+        last.innerHTML = `<b>${esc(itemLabel(cur))}</b><span class="muted">${t[cur] || 0} counted${byCode[cur] ? '' : ' · add it when you review'}</span>`;
+      } else {
+        last.className = 'last';
+        last.innerHTML = '<span class="muted">Scan every box in the store. Each beep = 1. Move the camera off a label before scanning the next box.</span>';
+      }
+      list.innerHTML = codes.length ? codes.map(c => `
+        <li class="${byCode[c] ? '' : 'unknown'}">
+          <div class="name">${esc(itemLabel(c))}<small>${esc(byCode[c] ? (ICON[byCode[c].truck] || '') + ' ' + byCode[c].truck : c)}</small></div>
+          <button data-minus="${esc(c)}" aria-label="Remove one">−</button>
+          <span class="qty">${t[c]}</span>
+          <button data-plus="${esc(c)}" aria-label="Add one">+</button>
+        </li>`).join('') : '<li class="empty">Nothing scanned yet</li>';
+    } else {
+      const s = recvSession();
+      const t = recvTotals(s.lines);
+      const codes = recentOrder(s.lines.map(l => l.code)).filter(c => t[c]);
+      const units = Object.values(t).reduce((a, b) => a + b, 0);
+      $('#scanTotal').textContent = `${codes.length} items · ${units} units`;
+      $('#finishBtn').textContent = 'Review & Submit';
+      const cur = justScanned && t[justScanned] ? justScanned : codes[0];
+      if (cur) {
+        last.className = 'last';
+        last.innerHTML = `<b>${esc(itemLabel(cur))}</b><span class="muted">${t[cur]} received</span>`;
+      } else {
+        last.className = 'last';
+        last.innerHTML = '<span class="muted">Scan ONE box of each item, then type how many came off the truck.</span>';
+      }
+      list.innerHTML = codes.length ? codes.map(c => `
+        <li>
+          <div class="name">${esc(itemLabel(c))}<small>${esc(byCode[c] ? byCode[c].truck : c)}</small></div>
+          <span class="qty">${t[c]}</span>
+          <button data-edit="${esc(c)}">Edit</button>
+        </li>`).join('') : '<li class="empty">Nothing received yet</li>';
+    }
+  }
+
+  $('#tally').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.plus) {
+      const s = countSession(); s.log.push(b.dataset.plus); Inv.save('count', s); renderScan(b.dataset.plus);
+    } else if (b.dataset.minus) {
+      const s = countSession();
+      const i = s.log.lastIndexOf(b.dataset.minus);
+      if (i >= 0) s.log.splice(i, 1);
+      Inv.save('count', s);
+      renderScan(b.dataset.minus);
+    } else if (b.dataset.edit) {
+      const it = byCode[b.dataset.edit] || { barcode: b.dataset.edit, name: b.dataset.edit };
+      paused = true;
+      addReceived(it, true).finally(() => { paused = false; });
+    }
+  };
+
+  $('#undoBtn').onclick = () => {
+    if (mode === 'count') {
+      const s = countSession();
+      const c = s.log.pop();
+      Inv.save('count', s);
+      if (c) toast('Removed 1 × ' + itemLabel(c));
+    } else {
+      const s = recvSession();
+      const l = s.lines.pop();
+      Inv.save('recv', s);
+      if (l) toast(`Removed ${l.qty} × ${itemLabel(l.code)}`);
+    }
+    renderScan();
+  };
+  $('#finishBtn').onclick = () => show('review');
+
+  // ─────────── Dialogs ───────────
+  const QUICK = [1, 2, 3, 4, 5, 6, 8, 10, 12, 24];
+  $('#quick').innerHTML = QUICK.map(n => `<button type="button" data-n="${n}">${n}</button>`).join('');
+  function qtyPrompt(name, info, initial) {
+    const dlg = $('#qtyDlg');
+    const input = $('#qtyInput');
+    $('#qtyName').textContent = name;
+    $('#qtyInfo').textContent = info || '';
+    input.value = initial === '' || initial === undefined ? '' : initial;
+    dlg.returnValue = '';
+    return new Promise(resolve => {
+      $('#quick').onclick = (e) => {
+        const b = e.target.closest('button');
+        if (b) { input.value = b.dataset.n; dlg.close('ok'); }
+      };
+      $('#qtyCancel').onclick = () => dlg.close('cancel');
+      dlg.addEventListener('close', () => {
+        const n = parseInt(input.value, 10);
+        resolve(dlg.returnValue === 'ok' && !isNaN(n) && n >= 0 ? n : null);
+      }, { once: true });
+      dlg.showModal();
+      input.focus();
+    });
+  }
+
+  $('#newTruck').innerHTML = TRUCKS.map(t => `<option>${esc(t)}</option>`).join('');
+  function newItemPrompt(code) {
+    const dlg = $('#newDlg');
+    $('#newCode').textContent = code;
+    ['#newName', '#newCost', '#newPar', '#newLow', '#newVeryLow'].forEach(s => { $(s).value = ''; });
+    $('#newErr').textContent = '';
+    return new Promise(resolve => {
+      let result = null;
+      $('#newCancel').onclick = () => dlg.close();
+      $('#newForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = $('#newSave');
+        btn.disabled = true;
+        $('#newErr').textContent = '';
+        try {
+          const res = await Inv.api('addItem', {
+            id: Inv.uid(),
+            item: {
+              barcode: code, name: $('#newName').value, truck: $('#newTruck').value,
+              cost: $('#newCost').value, par: $('#newPar').value, low: $('#newLow').value, veryLow: $('#newVeryLow').value,
+            },
+          });
+          indexItems();
+          result = byCode[res.barcode] || null;
+          toast('Added ' + $('#newName').value, 'good');
+          dlg.close();
+        } catch (err) {
+          $('#newErr').textContent = err instanceof Inv.ApiError ? err.message : 'No connection. You need signal to add a new item.';
+        } finally {
+          btn.disabled = false;
+        }
+      };
+      dlg.addEventListener('close', () => resolve(result), { once: true });
+      dlg.showModal();
+    });
+  }
+
+  // ─────────── Review & submit ───────────
+  function renderReview() {
+    const body = $('#reviewBody');
+    const items = Inv.items();
+    if (mode === 'count') {
+      const s = countSession();
+      const t = tallyOf(s.log);
+      const scanned = Object.keys(t);
+      const unknown = scanned.filter(c => !byCode[c]);
+      const known = scanned.filter(c => byCode[c]);
+      const missing = items.filter(it => it.barcode && !t[it.barcode]);
+      const zero = s.zeroMissing !== false;
+      body.innerHTML = `
+        <h2>Weekly count</h2>
+        <p>${s.log.length} boxes scanned across ${known.length} items.</p>
+        ${unknown.length ? `<div class="banner bad"><b>${unknown.length} label${unknown.length > 1 ? 's' : ''} not in your sheet.</b> Add them, or they'll be left out.</div>
+          <ul class="list">${unknown.map(c => `<li class="unknown"><div class="name">${esc(c)}<small>${t[c]} scanned</small></div>
+            <button data-add="${esc(c)}">Add item</button><button data-drop="${esc(c)}">Remove</button></li>`).join('')}</ul>` : ''}
+        <label class="check"><input type="checkbox" id="zeroMissing" ${zero ? 'checked' : ''}>
+          <span>Anything I didn't scan is <b>out of stock</b> (set to 0).<br><small class="muted">Untick if you only counted part of the store this time.</small></span></label>
+        ${missing.length ? `<details ${missing.length <= 8 ? 'open' : ''}><summary>Not scanned (${missing.length})</summary><ul class="list">
+          ${missing.map(it => `<li><div class="name">${esc(it.name)}<small>${esc((ICON[it.truck] || '') + ' ' + it.truck)}${it.lastCount !== null ? ' · last count ' + it.lastCount : ''}</small></div>
+            <span class="qty">0</span></li>`).join('')}</ul></details>` : ''}
+        <details><summary>Scanned (${known.length})</summary><ul class="list">
+          ${known.sort((a, b) => byCode[a].name.localeCompare(byCode[b].name)).map(c => `<li><div class="name">${esc(byCode[c].name)}<small>${esc(byCode[c].truck)}${byCode[c].lastCount !== null ? ' · last count ' + byCode[c].lastCount : ''}</small></div>
+            <span class="qty">${t[c]}</span></li>`).join('') || '<li class="empty">Nothing yet</li>'}</ul></details>`;
+      $('#zeroMissing').onchange = (e) => { const cs = countSession(); cs.zeroMissing = e.target.checked; Inv.save('count', cs); };
+      $('#submitBtn').textContent = 'Submit count';
+      $('#submitBtn').disabled = s.log.length === 0;
+    } else {
+      const s = recvSession();
+      const t = recvTotals(s.lines);
+      const codes = Object.keys(t);
+      let cost = 0;
+      codes.forEach(c => { if (byCode[c] && byCode[c].cost) cost += byCode[c].cost * t[c]; });
+      body.innerHTML = `
+        <h2>Truck delivery</h2>
+        <p>${codes.length} items · ${Object.values(t).reduce((a, b) => a + b, 0)} units${cost ? ' · ' + money(cost) : ''}</p>
+        <ul class="list">${codes.map(c => `<li><div class="name">${esc(itemLabel(c))}<small>${esc(byCode[c] ? byCode[c].truck : '')}</small></div>
+          <span class="qty">${t[c]}</span></li>`).join('') || '<li class="empty">Nothing received yet</li>'}</ul>`;
+      $('#submitBtn').textContent = 'Submit delivery';
+      $('#submitBtn').disabled = codes.length === 0;
+    }
+  }
+
+  $('#reviewBody').onclick = async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.drop) {
+      const s = countSession();
+      s.log = s.log.filter(c => c !== b.dataset.drop);
+      Inv.save('count', s);
+      renderReview();
+    } else if (b.dataset.add) {
+      await newItemPrompt(b.dataset.add);
+      renderReview();
+    }
+  };
+  $('#keepScanning').onclick = () => show('scan');
+
+  $('#submitBtn').onclick = async () => {
+    const btn = $('#submitBtn');
+    let job;
+    if (mode === 'count') {
+      const s = countSession();
+      const t = tallyOf(s.log);
+      const zeroMissing = $('#zeroMissing').checked;
+      const unknown = Object.keys(t).filter(c => !byCode[c]);
+      if (unknown.length && !confirm(`${unknown.length} unknown label(s) will be left out. Submit anyway?`)) return;
+      job = { action: 'count', id: s.id, counts: t, zeroMissing, label: `Weekly count (${s.log.length} boxes)` };
+    } else {
+      const s = recvSession();
+      const t = recvTotals(s.lines);
+      job = {
+        action: 'receive', id: s.id,
+        lines: Object.keys(t).map(c => ({ barcode: c, qty: t[c] })),
+        label: `Truck (${Object.values(t).reduce((a, b) => a + b, 0)} units)`,
+      };
+    }
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    const clear = () => Inv.save(mode === 'count' ? 'count' : 'recv', null);
+    try {
+      const res = await Inv.api(job.action, job);
+      clear();
+      indexItems();
+      setNet(true);
+      if (mode === 'count') {
+        const n = Inv.items().filter(it => it.orderQty > 0).length;
+        toast(`Count saved ✓ ${n} item${n === 1 ? '' : 's'} to order.`, 'good');
+        show('order');
+      } else {
+        toast(`Delivery saved ✓ (${res.saved} items)`, 'good');
+        show('home');
+      }
+    } catch (e) {
+      if (e instanceof Inv.ApiError) {
+        toast(e.message, 'bad');
+        btn.disabled = false;
+        btn.textContent = 'Try again';
+        return;
+      }
+      const box = Inv.load('outbox', []);
+      box.push(job);
+      Inv.save('outbox', box);
+      clear();
+      setNet(false);
+      toast('No signal — saved on this phone. It will send when you\'re back online.', 'warn');
+      show('home');
+    }
+  };
+
+  // ─────────── Order list ───────────
+  let orderTruck = TRUCKS[0];
+  function orderRows() {
+    const showAll = $('#showAll').checked;
+    return Inv.items()
+      .filter(it => it.truck === orderTruck && (showAll || it.orderQty > 0))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function renderOrder() {
+    const items = Inv.items();
+    $('#orderTabs').innerHTML = TRUCKS.map(t => {
+      const n = items.filter(it => it.truck === t && it.orderQty > 0).length;
+      return `<button data-t="${esc(t)}" class="${t === orderTruck ? 'on' : ''}">${ICON[t]} ${esc(t.split(' /')[0])}${n ? ' (' + n + ')' : ''}</button>`;
+    }).join('');
+    const rows = orderRows();
+    const total = rows.reduce((a, it) => a + (it.orderCost || 0), 0);
+    const showAll = $('#showAll').checked;
+    $('#orderBody').innerHTML = rows.length ? `
+      <ul class="list">${rows.map(it => `<li>
+        <span class="dot ${esc((it.status || '').split(' ')[0])}"></span>
+        <div class="name">${esc(it.name)}<small>${it.onHand === null ? 'not counted' : 'have ' + it.onHand}${it.par !== null ? ' · par ' + it.par : ' · no par set'}${it.truck === TRUCKS[2] && it.sysco ? ' · #' + esc(it.sysco) : ''}</small></div>
+        <span class="qty">${it.orderQty > 0 ? it.orderQty : (showAll ? '–' : '')}</span></li>`).join('')}</ul>
+      <div class="total"><span>Estimated cost</span><span>${money(total)}</span></div>`
+      : `<div class="empty">${items.length ? 'Nothing to order for this truck 🎉' : 'No items loaded yet.'}</div>`;
+  }
+  $('#orderTabs').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b) { orderTruck = b.dataset.t; renderOrder(); }
+  };
+  $('#showAll').onchange = renderOrder;
+  $('#orderRefresh').onclick = async () => { await refreshItems(false); renderOrder(); };
+  $('#copyOrder').onclick = async () => {
+    const rows = Inv.items().filter(it => it.truck === orderTruck && it.orderQty > 0).sort((a, b) => a.name.localeCompare(b.name));
+    const text = `${orderTruck} order\n` + rows.map(it => `${it.orderQty} × ${it.name}${it.sysco ? ' (#' + it.sysco + ')' : ''}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Copied — paste it into a text or email', 'good');
+    } catch (e) {
+      prompt('Copy this:', text);
+    }
+  };
+
+  // ─────────── Settings ───────────
+  function renderSettings() {
+    C = Inv.cfg();
+    $('#gap').value = C.gap;
+    $('#gapVal').textContent = Number(C.gap).toFixed(1);
+    $('#sound').checked = !!C.sound;
+    $('#camera').checked = !!C.camera;
+    $('#setApi').value = C.api;
+    $('#setKey').value = C.key;
+  }
+  $('#gap').oninput = (e) => { $('#gapVal').textContent = Number(e.target.value).toFixed(1); };
+  $('#saveSettings').onclick = () => {
+    C = Object.assign(Inv.cfg(), {
+      gap: Number($('#gap').value), sound: $('#sound').checked, camera: $('#camera').checked,
+      api: $('#setApi').value.trim(), key: $('#setKey').value.trim(),
+    });
+    Inv.save('cfg', C);
+    toast('Saved', 'good');
+    show('home');
+  };
+  $('#testConn').onclick = async () => {
+    Inv.save('cfg', Object.assign(Inv.cfg(), { api: $('#setApi').value.trim(), key: $('#setKey').value.trim() }));
+    try {
+      const res = await Inv.api('items');
+      indexItems();
+      toast(`Connected ✓ ${res.items.length} items`, 'good');
+    } catch (e) {
+      toast(e instanceof Inv.ApiError ? e.message : 'Can\'t reach Google. Check signal, and that the web app access is "Anyone".', 'bad');
+    }
+  };
+  $('#clearCount').onclick = () => {
+    if (confirm('Throw away the weekly count in progress?')) { Inv.save('count', null); toast('Cleared'); }
+  };
+  $('#clearRecv').onclick = () => {
+    if (confirm('Throw away the truck delivery in progress?')) { Inv.save('recv', null); toast('Cleared'); }
+  };
+
+  $('#setupSave').onclick = () => {
+    const api = $('#setupApi').value.trim();
+    const key = $('#setupKey').value.trim();
+    if (!api || !key) return toast('Fill in both boxes', 'bad');
+    Inv.save('cfg', Object.assign(Inv.cfg(), { api, key }));
+    boot();
+  };
+
+  // ─────────── Start ───────────
+  function boot() {
+    C = Inv.cfg();
+    indexItems();
+    if (!C.api || !C.key) { show('setup'); return; }
+    show('home');
+    refreshItems(true);
+    flushOutbox(false);
+  }
+  if (Inv.readSetupLink()) toast('Phone is set up ✓', 'good');
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && view === 'home') { refreshItems(true); flushOutbox(false); }
+  });
+  boot();
+})();
+</script>
+</body>
+</html>
